@@ -50,10 +50,7 @@ object ToursDbActor {
         def toTour(iataByName: Map[String, String]): Tour = {
 
             def getFlights(dbFlights: Option[Traversable[DbFlight]]): Traversable[Flight] =
-                if (dbFlights.isDefined)
-                    dbFlights.get.map(_.toFlight(iataByName))
-                else
-                    null
+				dbFlights.getOrElse(Traversable()).map(_.toFlight(iataByName))
 
             Tour(tourId, hotelName, minCost, getFlights(departFlights), getFlights(arrivalFlights))
         }
