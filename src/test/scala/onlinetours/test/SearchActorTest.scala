@@ -172,4 +172,50 @@ class SearchActorTest extends FreeSpec {
             List(Flight(Aviacompany("Аэрофлот", Some("SU")), (today plusDays 5).toLocalDateTime(LocalTime.MIDNIGHT))
             )))))
     }
+
+    "ANOTHER отвечаем наиболее дешевым туром, успевшим подгрузить перелёты, если самый дешевый не успел" in new Fixture {
+        val dbTour2NoFlights = dbTour2.copy(arrivalFlights = None, departFlights = None)
+
+        //получаем коды регионов и запускаем поиски
+        dbActor.expectMsg(FetchRegionIdByIata(List(request.departureIata, request.arrivalIata)))
+        dbActor.send(searchActor, RegionByIataFetched(Map(("SVO", 1), ("SSH", 2))))
+        apiActor.expectMsg(StartSearch(searchQuery))
+        tourDbActor.expectMsg(FindCheapestTour(searchQuery))
+
+        //получаем тур из NoSQL БД без перелётов
+        tourDbActor.send(searchActor, Cheapest(Some(dbTour2NoFlights)))
+
+        // ожидаем старта актуализации по нему
+        apiActor.expectMsg(StartFlightLoading(dbTour2NoFlights.tourId))
+        apiActor.send(searchActor, FlightLoadingStarted(dbTour2NoFlights.tourId))
+
+        //поиск в БД закончился
+        dbActor.send(searchActor, SearchStatus("searchId_1", true, 0))
+
+        //запрашиваем в NoSQL БД тур и находим более дешевый без информации о перелётах
+        tourDbActor.expectMsg(FindCheapestTour(searchQuery))
+        tourDbActor.send(searchActor, Cheapest(Some(dbTour1NoFlights)))
+
+        //запускаем поиск информации о перелётах
+        apiActor.expectMsg(StartFlightLoading(dbTour1NoFlights.tourId))
+        apiActor.send(searchActor, FlightLoadingStarted(dbTour1NoFlights.tourId))
+
+        tourDbActor.expectMsgAllOf(6 seconds, FetchTour(dbTour2NoFlights.tourId), FetchTour(dbTour1NoFlights.tourId))
+
+        // предыдущий (не самый дешевый) тур закончил загрузку перелётов
+
+        tourDbActor.send(searchActor, TourFetched(Some(dbTour2)))
+
+        //ждём максимальное время выполнения запроса
+        Thread.sleep(25000)
+
+        //получаем Iata коды по именам авиакомпаний и отправляем результат
+        dbActor.expectMsg(FetchAviacompanyIataByName(List("Трансаэро", "Аэрофлот")))
+        dbActor.send(searchActor, AviacompanyIataByNameFetched(Map(("Трансаэро", "UN"), ("Аэрофлот", "SU"))))
+
+        requester.expectMsg(35 seconds, Response(scala.util.Success(Tour("dbTour2", "hotel2", 100500,
+            List(Flight(Aviacompany("Трансаэро", Some("UN")), today.toLocalDateTime(LocalTime.MIDNIGHT))),
+            List(Flight(Aviacompany("Аэрофлот", Some("SU")), (today plusDays 5).toLocalDateTime(LocalTime.MIDNIGHT))
+            )))))
+    }
 }
